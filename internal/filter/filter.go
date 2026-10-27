@@ -10,7 +10,7 @@ import (
 )
 
 // Options are the user-facing filter options. Empty dates disable that side
-// of the range. DateField defaults to "due".
+// of the range. DateField defaults to "due" and Status defaults to "todo".
 type Options struct {
 	Tags      []string
 	HideTags  []string
@@ -18,6 +18,7 @@ type Options struct {
 	After     string
 	Before    string
 	DateField string
+	Status    string
 }
 
 // Filter is a compiled set of task predicates.
@@ -30,10 +31,21 @@ type Filter struct {
 	hasAfter  bool
 	hasBefore bool
 	dateField string
+	status    string
 }
 
 // New validates and compiles filter options.
 func New(options Options) (Filter, error) {
+	status := strings.ToLower(strings.TrimSpace(options.Status))
+	if status == "" {
+		status = "todo"
+	}
+	switch status {
+	case "any", "done", "todo":
+	default:
+		return Filter{}, fmt.Errorf("unsupported status %q (use any, done, or todo)", options.Status)
+	}
+
 	dateField := strings.ToLower(strings.TrimSpace(options.DateField))
 	if dateField == "" {
 		dateField = "due"
@@ -49,6 +61,7 @@ func New(options Options) (Filter, error) {
 		hideTags:  normalizeTags(options.HideTags),
 		search:    strings.ToLower(strings.TrimSpace(options.Search)),
 		dateField: dateField,
+		status:    status,
 	}
 
 	if strings.TrimSpace(options.After) != "" {
@@ -77,6 +90,10 @@ func New(options Options) (Filter, error) {
 
 // Match reports whether task passes all configured filters.
 func (f Filter) Match(task model.Task) bool {
+	if !matchesStatus(task.Status, f.status) {
+		return false
+	}
+
 	if len(f.hideTags) > 0 {
 		for _, tag := range task.Tags {
 			if matchesAnyTag(tag, f.hideTags) {
@@ -172,6 +189,18 @@ func ParseDate(value string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+func matchesStatus(status, filter string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch filter {
+	case "any":
+		return true
+	case "done":
+		return status == "done"
+	default: // todo: every non-terminal, non-cancelled task
+		return status != "done" && status != "cancelled"
+	}
 }
 
 func selectedDate(task model.Task, field string) string {

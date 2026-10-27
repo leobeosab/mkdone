@@ -16,8 +16,8 @@ mkdone ./ --tags '#work' --format json --out tasks.json
 - Inline tasks with status, priority, tags, dates, recurrence, IDs, dependencies,
   custom properties, parents, and searchable notes.
 - File tasks from task-like YAML frontmatter.
-- Filters for tags, hidden tags, search text, and due/scheduled/completed dates.
-- CSV and JSON output to stdout or a file.
+- Filters for status, tags, hidden tags, search text, and due/scheduled/completed dates.
+- CSV and JSON task output plus tag/priority/due-date summaries.
 - Markdown discovery through `ripgrep`, with a concurrent worker pool for parsing.
 - A fallback directory walk when `ripgrep` is not installed.
 
@@ -95,6 +95,7 @@ open,inline test +[[$4 mouse jiggler]],medium,#work,2026-10-27,2026-10-31,...
 | `--tags TAG[,TAG...]` | Keep tasks with at least one matching tag. Parent tags match subtags: `#work` matches `#work/api`. Repeat the option to add more tags. |
 | `--hidetags TAG[,TAG...]` | Drop tasks with any matching tag. Parent tags also match subtags. |
 | `--search TEXT` | Case-insensitive search in task content and attached notes/details. |
+| `--status any\|done\|todo` | Filter by status. Defaults to `todo`. `todo` includes open, in-progress, and other unfinished tasks; it excludes `done` and `cancelled`. `done` matches only completed tasks. `any` disables status filtering. |
 | `--after DATE` | Keep tasks on or after `DATE` (inclusive). |
 | `--before DATE` | Keep tasks on or before `DATE` (inclusive). |
 | `--due` | Compare date filters with `due_at`. This is the default. |
@@ -104,7 +105,8 @@ open,inline test +[[$4 mouse jiggler]],medium,#work,2026-10-27,2026-10-31,...
 All filter types are combined with AND. Tag filters use OR within the values
 given to `--tags`. Dates use `YYYY-MM-DD` (RFC3339 timestamps are also accepted
 in `--after`/`--before`). When a date range is active, a task without the
-selected date is omitted.
+selected date is omitted. The default `--status todo` means completed and
+cancelled tasks are hidden unless you pass `--status any` or `--status done`.
 
 `--scheduled` and `--completed` (or `--complete`) cannot be used together. If either is supplied,
 it overrides the default due-date field.
@@ -124,18 +126,104 @@ mkdone ./ --after 2025-10-01 --before 2026-06-10 --scheduled
 
 # Search task text and indented notes
 mkdone ./ --search 'mouse jiggler'
+
+# Include completed and cancelled tasks too
+mkdone ./ --status any
+
+# Only completed tasks
+mkdone ./ --status done
+```
+
+### Summary
+
+Use `-s` or `--summary` to print aggregate information instead of the task list:
+
+```bash
+mkdone ./ --summary
+mkdone ./ -s --tags '#work'
+mkdone ./ -s --format json --out summary.json
+```
+
+All normal filters still apply before the summary is calculated. Because the
+default status filter is `todo`, completed and cancelled tasks are excluded from
+summaries unless you pass `--status any` or `--status done`.
+
+The default summary is human-readable text:
+
+```text
+Tasks:  3
+
+Tags:
+  #work    3
+
+Priorities:
+  highest   0
+  high      1
+  medium    1
+  low       0
+  lowest    0
+  normal    1
+
+Due:
+  Today      1
+  Tomorrow   1
+  Week       3
+  30 days    3
+```
+
+Summary details:
+
+- `Tasks` is the total number of filtered tasks.
+- Each tag shows how many tasks carry that exact tag. A task with multiple tags
+  is counted under each tag, and untagged tasks appear only in the total.
+- All six priority slots are always shown, including zeros. Unexpected priority
+  values are appended after the standard slots.
+- Due windows use `due_at` and are rolling windows that include today:
+  - `Today`: due today.
+  - `Tomorrow`: due tomorrow.
+  - `Week`: due within the next 7 days, including today and tomorrow.
+  - `30 days`: due within the next 30 days.
+- Overdue tasks and tasks without a due date are not included in due windows.
+
+Summary output also supports CSV and JSON via `--format`. With no `--format`,
+`.json` and `.csv` output files infer the matching summary format; otherwise
+the summary defaults to text.
+
+```bash
+mkdone ./ -s --format csv --out summary.csv
+mkdone ./ -s --out summary.json   # inferred as JSON
+```
+
+Summary CSV uses three columns, `category,key,count`, with categories `total`,
+`tag`, `priority`, and `due`. Summary JSON looks like:
+
+```json
+{
+  "total": 3,
+  "tags": [{"tag": "#work", "count": 3}],
+  "priorities": [
+    {"priority": "highest", "count": 0},
+    {"priority": "high", "count": 1},
+    {"priority": "medium", "count": 1},
+    {"priority": "low", "count": 0},
+    {"priority": "lowest", "count": 0},
+    {"priority": "normal", "count": 1}
+  ],
+  "due": {"today": 1, "tomorrow": 1, "week": 3, "30_days": 3}
+}
 ```
 
 ### Output format and file
 
 | Option | Behavior |
 | --- | --- |
-| `--format csv\|json` | Select the format. Default is `csv`. |
+| `--format csv\|json\|text` | Select the format. Tasks default to `csv`; summaries default to `text`. `text` is only valid with `--summary`. |
 | `--out FILE` | Write to `FILE` instead of stdout. `--out -` means stdout. |
 | `--workers N` | Number of concurrent file readers. Defaults to the CPU count. `0` also means the CPU count. |
 
-When `--format` is omitted, a `.json` output file implies JSON and a `.csv`
-output file implies CSV. Everything else defaults to CSV.
+For task output, when `--format` is omitted a `.json` output file implies JSON
+and a `.csv` output file implies CSV. Everything else defaults to CSV. Summary
+format inference follows the same extension rules but defaults to text.
 
 ```bash
 mkdone ./ --format json --out out.json
@@ -326,7 +414,8 @@ go test ./...
 ```
 
 The tests cover inline and frontmatter parsing, code fences, parents/notes,
-filters, date comparisons, CSV/JSON output, ripgrep discovery, and CLI behavior.
+filters, date comparisons, CSV/JSON task output, summaries, ripgrep discovery,
+and CLI behavior.
 
 ## Limitations
 

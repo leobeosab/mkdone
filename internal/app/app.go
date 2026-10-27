@@ -8,9 +8,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ryan/mkdone/internal/filter"
-	"github.com/ryan/mkdone/internal/model"
 	"github.com/ryan/mkdone/internal/output"
 	"github.com/ryan/mkdone/internal/scanner"
 )
@@ -33,7 +33,9 @@ type config struct {
 	completed  bool
 	help       bool
 	version    bool
+	summary    bool
 	dateField  string
+	status     string
 	positional []string
 }
 
@@ -74,13 +76,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		After:     cfg.after,
 		Before:    cfg.before,
 		DateField: cfg.dateField,
+		Status:    cfg.status,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "mkdone: error: %v\n", err)
 		return 2
 	}
 
-	format, err := output.ResolveFormat(cfg.format, cfg.out)
+	var format string
+	if cfg.summary {
+		format, err = output.ResolveSummaryFormat(cfg.format, cfg.out)
+	} else {
+		format, err = output.ResolveFormat(cfg.format, cfg.out)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "mkdone: error: %v\n", err)
 		return 2
@@ -96,7 +104,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	tasks := taskFilter.Apply(result.Tasks)
-	if err := writeOutput(tasks, format, cfg.out, stdout); err != nil {
+	err = writeOutput(cfg.out, stdout, func(writer io.Writer) error {
+		if cfg.summary {
+			return output.WriteSummary(tasks, format, writer, time.Now())
+		}
+		return output.Write(tasks, format, writer)
+	})
+	if err != nil {
 		fmt.Fprintf(stderr, "mkdone: error: %v\n", err)
 		return 1
 	}
@@ -107,6 +121,7 @@ func parseArgs(args []string) (config, error) {
 	cfg := config{
 		path:    ".",
 		workers: 0,
+		status:  "todo",
 	}
 	positionals := make([]string, 0)
 
@@ -127,6 +142,14 @@ func parseArgs(args []string) (config, error) {
 			cfg.help = boolFlag(value, hasValue)
 		case "v", "version":
 			cfg.version = boolFlag(value, hasValue)
+		case "s", "summary":
+			cfg.summary = boolFlag(value, hasValue)
+		case "status":
+			value, i, hasValue = nextValue(args, i, value, hasValue)
+			if !hasValue {
+				return cfg, fmt.Errorf("--status requires a value")
+			}
+			cfg.status = value
 		case "due":
 			cfg.due = boolFlag(value, hasValue)
 		case "scheduled":
@@ -229,7 +252,7 @@ func boolFlag(value string, hasValue bool) bool {
 	return parsed
 }
 
-func writeOutput(tasks []model.Task, format, out string, stdout io.Writer) error {
+func writeOutput(out string, stdout io.Writer, write func(io.Writer) error) error {
 	writer := stdout
 	var file *os.File
 	if out != "" && out != "-" {
@@ -241,7 +264,7 @@ func writeOutput(tasks []model.Task, format, out string, stdout io.Writer) error
 		writer = file
 	}
 
-	err := output.Write(tasks, format, writer)
+	err := write(writer)
 	if file != nil {
 		if closeErr := file.Close(); err == nil {
 			err = closeErr
@@ -259,6 +282,10 @@ Reads inline checkbox tasks and task-like YAML frontmatter from Markdown files.
 Arguments:
   path                         File or directory to scan (default ".")
 
+Summary:
+  -s, --summary                Print tag, priority, and due-date totals instead
+                               of the task list. All filters still apply.
+
 Filters:
   --tags TAG[,TAG...]          Only tasks with at least one matching tag.
                                Parent tags match subtags (#work matches #work/api).
@@ -269,9 +296,13 @@ Filters:
   --scheduled                  Compare dates against scheduled_at instead.
   --completed, --complete      Compare dates against completed_at instead.
   --search TEXT                Case-insensitive search in task content and notes.
+  --status any|done|todo       Filter by status (default todo). todo includes
+                               open, in-progress, and other unfinished tasks;
+                               cancelled and done tasks are excluded.
 
 Output:
-  --format csv|json            Output format (default csv).
+  --format csv|json|text       Output format (default csv for tasks, text for
+                               summaries). text is only valid with --summary.
   --out FILE                   Write to FILE instead of stdout. "-" is stdout.
                                With no --format, .json/.csv infers the format.
   --workers N                  Parallel file readers (default: number of CPUs).
@@ -283,6 +314,8 @@ Examples:
   mkdone ./ --tags '#projects/tech' --hidetags '#someday'
   mkdone ./ --after 2025-10-01 --before 2026-06-10 --scheduled
   mkdone ./ --search 'mouse jiggler' --format json --out tasks.json
+  mkdone ./ --summary
+  mkdone ./ -s --tags '#work' --format json --out summary.json
 
 Dates use YYYY-MM-DD. --after and --before are inclusive. Tasks without the
 selected date are omitted when a date range is active.

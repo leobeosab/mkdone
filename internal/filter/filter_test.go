@@ -152,3 +152,59 @@ func TestParseDate(t *testing.T) {
 		t.Error("ParseDate accepted an invalid date")
 	}
 }
+
+func TestStatusFilter(t *testing.T) {
+	tasks := []model.Task{
+		{Status: "open"},
+		{Status: "in_progress"},
+		{Status: "done"},
+		{Status: "cancelled"},
+		{Status: ""},
+		{Status: "important"},
+	}
+
+	todo, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := todo.Apply(tasks)
+	if len(got) != 4 {
+		t.Fatalf("default status filter returned %d tasks, want 4: %#v", len(got), got)
+	}
+	for _, task := range got {
+		if task.Status == "done" || task.Status == "cancelled" {
+			t.Errorf("default todo filter included %q", task.Status)
+		}
+	}
+
+	done, err := New(Options{Status: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = done.Apply(tasks)
+	if len(got) != 1 || got[0].Status != "done" {
+		t.Fatalf("done filter = %#v", got)
+	}
+
+	any, err := New(Options{Status: "any"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = any.Apply(tasks); len(got) != len(tasks) {
+		t.Fatalf("any filter returned %d tasks, want %d", len(got), len(tasks))
+	}
+
+	explicitTodo, err := New(Options{Status: "todo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got = explicitTodo.Apply(tasks); len(got) != 4 {
+		t.Fatalf("todo filter returned %d tasks, want 4", len(got))
+	}
+}
+
+func TestInvalidStatus(t *testing.T) {
+	if _, err := New(Options{Status: "blocked"}); err == nil {
+		t.Error("New accepted an invalid status")
+	}
+}
