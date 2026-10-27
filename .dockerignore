@@ -1,0 +1,8 @@
+.git
+.gitignore
+bin
+mkdone
+*.out
+coverage.out
+coverage.html
+.DS_Store
