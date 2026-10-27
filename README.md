@@ -17,7 +17,8 @@ mkdone ./ --tags '#work' --format json --out tasks.json
   custom properties, parents, and searchable notes.
 - File tasks from task-like YAML frontmatter.
 - Filters for status, tags, hidden tags, search text, and due/scheduled/completed dates.
-- CSV and JSON task output plus tag/priority/due-date summaries.
+- Pretty, CSV, and JSON task output plus tag/priority/due-date summaries.
+- Random sampling and result limits for task output.
 - Markdown discovery through `ripgrep`, with a concurrent worker pool for parsing.
 - A fallback directory walk when `ripgrep` is not installed.
 
@@ -68,25 +69,18 @@ appear before or after the path.
 mkdone ./
 ```
 
-By default the result is CSV written to stdout. The first columns are:
+By default tasks are printed as a human-readable `pretty` table:
 
 ```text
-status,taskcontent,priority,tags,created_at,due_at
+STATUS  PRIORITY  CREATED     DUE         TAGS             TASK
+[ ]     normal    2025-12-31  -           #projects/tech   Design a personal pocket PC
+[ ]     medium    2026-10-27  2026-10-31  #work            inline test +[[$4 mouse jiggler]]
 ```
 
-followed by additional useful columns:
+Status is shown as a checkbox-like marker. Empty values are shown as `-`.
+When no tasks match, pretty output prints `No tasks found.`
 
-```text
-scheduled_at,completed_at,parent,source,line,type,id,notes,properties,start_at,cancelled_at,recurrence,depends_on,time
-```
-
-Example:
-
-```csv
-status,taskcontent,priority,tags,created_at,due_at,...
-open,Design a personal pocket PC,normal,#projects/tech,2025-12-31,,...
-open,inline test +[[$4 mouse jiggler]],medium,#work,2026-10-27,2026-10-31,...
-```
+Use `--format csv` or `--format json` for machine-readable output.
 
 ### Filters
 
@@ -134,6 +128,30 @@ mkdone ./ --status any
 mkdone ./ --status done
 ```
 
+### Limiting and randomizing task output
+
+| Option | Behavior |
+| --- | --- |
+| `--limit N` | Return at most `N` tasks after filtering. The default is unlimited. `--limit 0` returns no tasks. |
+| `-r`, `--random` | Shuffle the filtered task list. When combined with `--limit`, the limit is taken from the shuffled list, producing a random sample. |
+
+Both options only affect the task list. They are ignored by `--summary`.
+
+```bash
+# At most 10 filtered tasks
+mkdone ./ --limit 10
+
+# A random sample of 3 todo tasks
+mkdone ./ --random --limit 3
+mkdone ./ -r --limit 3 --tags '#work'
+
+# All filtered tasks in random order
+mkdone ./ --random
+```
+
+Ordering is applied after all normal filters: filters first, then random shuffle,
+then the limit.
+
 ### Summary
 
 Use `-s` or `--summary` to print aggregate information instead of the task list:
@@ -148,7 +166,7 @@ All normal filters still apply before the summary is calculated. Because the
 default status filter is `todo`, completed and cancelled tasks are excluded from
 summaries unless you pass `--status any` or `--status done`.
 
-The default summary is human-readable text:
+The default summary is human-readable `pretty` output:
 
 ```text
 Tasks:  3
@@ -185,9 +203,9 @@ Summary details:
   - `30 days`: due within the next 30 days.
 - Overdue tasks and tasks without a due date are not included in due windows.
 
-Summary output also supports CSV and JSON via `--format`. With no `--format`,
-`.json` and `.csv` output files infer the matching summary format; otherwise
-the summary defaults to text.
+Summary output also supports `pretty`, CSV, and JSON via `--format`. With no
+`--format`, `.json` and `.csv` output files infer the matching summary format;
+otherwise the summary defaults to pretty.
 
 ```bash
 mkdone ./ -s --format csv --out summary.csv
@@ -217,13 +235,12 @@ Summary CSV uses three columns, `category,key,count`, with categories `total`,
 
 | Option | Behavior |
 | --- | --- |
-| `--format csv\|json\|text` | Select the format. Tasks default to `csv`; summaries default to `text`. `text` is only valid with `--summary`. |
+| `--format pretty\|csv\|json` | Select the format. Defaults to `pretty` for both task lists and summaries. |
 | `--out FILE` | Write to `FILE` instead of stdout. `--out -` means stdout. |
 | `--workers N` | Number of concurrent file readers. Defaults to the CPU count. `0` also means the CPU count. |
 
-For task output, when `--format` is omitted a `.json` output file implies JSON
-and a `.csv` output file implies CSV. Everything else defaults to CSV. Summary
-format inference follows the same extension rules but defaults to text.
+When `--format` is omitted, a `.json` output file implies JSON and a `.csv`
+output file implies CSV. Everything else defaults to pretty.
 
 ```bash
 mkdone ./ --format json --out out.json
@@ -231,8 +248,19 @@ mkdone ./ --out out.json          # format inferred as JSON
 mkdone ./ --format csv --out tasks.csv
 ```
 
+Pretty task output:
+
+- Columns are `STATUS`, `PRIORITY`, `CREATED`, `DUE`, `TAGS`, and `TASK`.
+- Status uses checkbox-style markers: `[ ]`, `[x]`, `[-]`, `[/]`, `[>]`,
+  `[?]`, and `[!]`.
+- Empty values are shown as `-`.
+- For `--summary`, pretty output is the human-readable summary block shown
+  above instead of the task table.
+
 CSV conventions:
 
+- The first columns are `status,taskcontent,priority,tags,created_at,due_at`.
+- Additional columns are `scheduled_at,completed_at,parent,source,line,type,id,notes,properties,start_at,cancelled_at,recurrence,depends_on,time`.
 - `tags` is space-separated and every tag includes its leading `#`.
 - `notes` is joined with ` | `.
 - `properties` is sorted `key=value` pairs joined with `; `.
@@ -414,8 +442,8 @@ go test ./...
 ```
 
 The tests cover inline and frontmatter parsing, code fences, parents/notes,
-filters, date comparisons, CSV/JSON task output, summaries, ripgrep discovery,
-and CLI behavior.
+filters, date comparisons, CSV/JSON task output, summaries, random sampling,
+limits, ripgrep discovery, and CLI behavior.
 
 ## Limitations
 

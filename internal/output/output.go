@@ -1,4 +1,4 @@
-// Package output writes tasks as CSV or JSON.
+// Package output writes tasks as pretty text, CSV, or JSON.
 package output
 
 import (
@@ -10,14 +10,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/ryan/mkdone/internal/model"
 )
 
 // Supported output formats.
 const (
-	FormatCSV  = "csv"
-	FormatJSON = "json"
+	FormatCSV    = "csv"
+	FormatJSON   = "json"
+	FormatPretty = "pretty"
 )
 
 var csvHeader = []string{
@@ -44,7 +46,7 @@ var csvHeader = []string{
 }
 
 // ResolveFormat validates format and, when format is empty, infers it from the
-// output file extension. CSV is the default.
+// output file extension. Pretty is the default.
 func ResolveFormat(format, out string) (string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format == "" {
@@ -54,27 +56,80 @@ func ResolveFormat(format, out string) (string, error) {
 		case ".csv":
 			format = FormatCSV
 		default:
-			format = FormatCSV
+			format = FormatPretty
 		}
 	}
 	switch format {
+	case FormatPretty, "text", "txt":
+		return FormatPretty, nil
 	case FormatCSV, FormatJSON:
 		return format, nil
 	default:
-		return "", fmt.Errorf("unsupported format %q (use csv or json)", format)
+		return "", fmt.Errorf("unsupported format %q (use pretty, csv, or json)", format)
 	}
 }
 
-// Write encodes tasks in the requested format. format must be csv or json.
+// Write encodes tasks in the requested format: pretty, csv, or json.
 func Write(tasks []model.Task, format string, writer io.Writer) error {
 	switch strings.ToLower(format) {
+	case FormatPretty, "text", "txt":
+		return writePretty(tasks, writer)
 	case FormatCSV:
 		return writeCSV(tasks, writer)
 	case FormatJSON:
 		return writeJSON(tasks, writer)
 	default:
-		return fmt.Errorf("unsupported format %q (use csv or json)", format)
+		return fmt.Errorf("unsupported format %q (use pretty, csv, or json)", format)
 	}
+}
+
+func writePretty(tasks []model.Task, writer io.Writer) error {
+	if len(tasks) == 0 {
+		_, err := fmt.Fprintln(writer, "No tasks found.")
+		return err
+	}
+
+	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "STATUS\tPRIORITY\tCREATED\tDUE\tTAGS\tTASK")
+	for _, task := range tasks {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			prettyStatus(task.Status),
+			prettyValue(task.Priority),
+			prettyValue(task.CreatedAt),
+			prettyValue(task.DueAt),
+			prettyValue(strings.Join(task.Tags, " ")),
+			task.Content,
+		)
+	}
+	return table.Flush()
+}
+
+func prettyStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "open":
+		return "[ ]"
+	case "done":
+		return "[x]"
+	case "cancelled":
+		return "[-]"
+	case "in_progress":
+		return "[/]"
+	case "forwarded":
+		return "[>]"
+	case "question":
+		return "[?]"
+	case "important":
+		return "[!]"
+	default:
+		return "[" + status + "]"
+	}
+}
+
+func prettyValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func writeCSV(tasks []model.Task, writer io.Writer) error {

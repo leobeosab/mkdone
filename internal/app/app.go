@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ryan/mkdone/internal/filter"
+	"github.com/ryan/mkdone/internal/model"
 	"github.com/ryan/mkdone/internal/output"
 	"github.com/ryan/mkdone/internal/scanner"
 )
@@ -28,6 +30,8 @@ type config struct {
 	format     string
 	out        string
 	workers    int
+	limit      int
+	random     bool
 	due        bool
 	scheduled  bool
 	completed  bool
@@ -104,6 +108,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	tasks := taskFilter.Apply(result.Tasks)
+	if !cfg.summary {
+		tasks = orderTasks(tasks, cfg.random, cfg.limit,
+			rand.New(rand.NewSource(time.Now().UnixNano())))
+	}
 	err = writeOutput(cfg.out, stdout, func(writer io.Writer) error {
 		if cfg.summary {
 			return output.WriteSummary(tasks, format, writer, time.Now())
@@ -121,6 +129,7 @@ func parseArgs(args []string) (config, error) {
 	cfg := config{
 		path:    ".",
 		workers: 0,
+		limit:   -1,
 		status:  "todo",
 	}
 	positionals := make([]string, 0)
@@ -150,6 +159,18 @@ func parseArgs(args []string) (config, error) {
 				return cfg, fmt.Errorf("--status requires a value")
 			}
 			cfg.status = value
+		case "r", "random":
+			cfg.random = boolFlag(value, hasValue)
+		case "limit":
+			value, i, hasValue = nextValue(args, i, value, hasValue)
+			if !hasValue {
+				return cfg, fmt.Errorf("--limit requires a number")
+			}
+			limit, err := strconv.Atoi(value)
+			if err != nil || limit < 0 {
+				return cfg, fmt.Errorf("--limit must be a non-negative integer, got %q", value)
+			}
+			cfg.limit = limit
 		case "due":
 			cfg.due = boolFlag(value, hasValue)
 		case "scheduled":
@@ -252,6 +273,23 @@ func boolFlag(value string, hasValue bool) bool {
 	return parsed
 }
 
+func orderTasks(tasks []model.Task, randomize bool, limit int, rng *rand.Rand) []model.Task {
+	ordered := tasks
+	if randomize {
+		ordered = append([]model.Task(nil), tasks...)
+		if rng == nil {
+			rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+		}
+		rng.Shuffle(len(ordered), func(i, j int) {
+			ordered[i], ordered[j] = ordered[j], ordered[i]
+		})
+	}
+	if limit >= 0 && len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+	return ordered
+}
+
 func writeOutput(out string, stdout io.Writer, write func(io.Writer) error) error {
 	writer := stdout
 	var file *os.File
@@ -286,6 +324,12 @@ Summary:
   -s, --summary                Print tag, priority, and due-date totals instead
                                of the task list. All filters still apply.
 
+Task ordering:
+  --limit N                    Return at most N tasks (default unlimited; 0
+                               returns no tasks). Ignored with --summary.
+  -r, --random                 Shuffle tasks before applying --limit. Ignored
+                               with --summary.
+
 Filters:
   --tags TAG[,TAG...]          Only tasks with at least one matching tag.
                                Parent tags match subtags (#work matches #work/api).
@@ -301,8 +345,9 @@ Filters:
                                cancelled and done tasks are excluded.
 
 Output:
-  --format csv|json|text       Output format (default csv for tasks, text for
-                               summaries). text is only valid with --summary.
+  --format pretty|csv|json     Output format (default pretty). Pretty is a
+                               human-readable table for tasks and a readable
+                               summary block with --summary.
   --out FILE                   Write to FILE instead of stdout. "-" is stdout.
                                With no --format, .json/.csv infers the format.
   --workers N                  Parallel file readers (default: number of CPUs).
@@ -316,6 +361,8 @@ Examples:
   mkdone ./ --search 'mouse jiggler' --format json --out tasks.json
   mkdone ./ --summary
   mkdone ./ -s --tags '#work' --format json --out summary.json
+  mkdone ./ --random --limit 3
+  mkdone ./ --format csv --out tasks.csv
 
 Dates use YYYY-MM-DD. --after and --before are inclusive. Tasks without the
 selected date are omitted when a date range is active.

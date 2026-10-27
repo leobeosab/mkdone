@@ -108,10 +108,12 @@ func TestResolveFormat(t *testing.T) {
 		want   string
 		ok     bool
 	}{
-		{"", "", FormatCSV, true},
+		{"", "", FormatPretty, true},
 		{"", "tasks.json", FormatJSON, true},
 		{"", "tasks.csv", FormatCSV, true},
 		{"JSON", "", FormatJSON, true},
+		{"pretty", "", FormatPretty, true},
+		{"text", "", FormatPretty, true},
 		{"xml", "", "", false},
 	}
 	for _, test := range tests {
@@ -125,5 +127,43 @@ func TestResolveFormat(t *testing.T) {
 		} else if err == nil {
 			t.Errorf("ResolveFormat(%q, %q) returned no error", test.format, test.out)
 		}
+	}
+}
+
+func TestWritePretty(t *testing.T) {
+	tasks := []model.Task{
+		{
+			Status:    "open",
+			Content:   "Fix it",
+			Priority:  "high",
+			Tags:      []string{"#work", "#api"},
+			CreatedAt: "2026-01-01",
+			DueAt:     "2026-02-01",
+		},
+		{
+			Status:   "done",
+			Content:  "Old task",
+			Priority: "normal",
+		},
+	}
+	var buffer bytes.Buffer
+	if err := Write(tasks, FormatPretty, &buffer); err != nil {
+		t.Fatal(err)
+	}
+	output := buffer.String()
+	for _, expected := range []string{"STATUS", "PRIORITY", "CREATED", "DUE", "TAGS", "TASK", "[ ]", "[x]", "Fix it", "#work #api", "2026-02-01", "Old task"} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("pretty output is missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestWritePrettyEmpty(t *testing.T) {
+	var buffer bytes.Buffer
+	if err := Write(nil, FormatPretty, &buffer); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buffer.String()) != "No tasks found." {
+		t.Errorf("empty pretty output = %q", buffer.String())
 	}
 }

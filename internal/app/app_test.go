@@ -3,9 +3,13 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -38,7 +42,7 @@ func TestRunBasicCSVWithFlagsAfterPath(t *testing.T) {
 		"- [ ] Alpha #work 📅 2026-01-15\n"+
 		"- [ ] Beta #personal 📅 2026-01-20\n")
 
-	code, stdout, stderr := run(t, dir, "--tags", "#work")
+	code, stdout, stderr := run(t, dir, "--format", "csv", "--tags", "#work")
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
 	}
@@ -50,6 +54,24 @@ func TestRunBasicCSVWithFlagsAfterPath(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Beta") {
 		t.Errorf("stdout unexpectedly contains Beta: %s", stdout)
+	}
+}
+
+func TestRunPrettyDefault(t *testing.T) {
+	dir := t.TempDir()
+	writeMarkdown(t, dir, "tasks.md", "- [ ] Alpha #work ⏫ 📅 2026-01-15\n")
+
+	code, stdout, stderr := run(t, dir)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	for _, expected := range []string{"STATUS", "PRIORITY", "CREATED", "DUE", "TAGS", "TASK", "[ ]", "Alpha", "#work", "2026-01-15"} {
+		if !strings.Contains(stdout, expected) {
+			t.Errorf("default output is missing %q:\n%s", expected, stdout)
+		}
+	}
+	if strings.Contains(stdout, "status,taskcontent") {
+		t.Errorf("default output unexpectedly used CSV: %s", stdout)
 	}
 }
 
@@ -140,6 +162,9 @@ func TestRunArgumentErrors(t *testing.T) {
 		{"a", "b"},
 		{"--workers", "-1"},
 		{"--status", "blocked"},
+		{"--limit", "-1"},
+		{"--limit", "abc"},
+		{"--limit"},
 	}
 	for _, args := range tests {
 		code, _, stderr := run(t, args...)
@@ -286,5 +311,126 @@ func TestRunStatusFilter(t *testing.T) {
 		if test.summaryNo != "" && regexp.MustCompile(test.summaryNo).MatchString(stdout) {
 			t.Errorf("Run(%#v) summary unexpectedly matches %s: %s", summaryArgs, test.summaryNo, stdout)
 		}
+	}
+}
+
+func taskContents(t *testing.T, csvOutput string) []string {
+	t.Helper()
+	records, err := csv.NewReader(strings.NewReader(csvOutput)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := make([]string, 0, len(records)-1)
+	for _, record := range records[1:] {
+		contents = append(contents, record[1])
+	}
+	return contents
+}
+
+func TestOrderTasks(t *testing.T) {
+	base := []model.Task{
+		{Content: "A"}, {Content: "B"}, {Content: "C"},
+		{Content: "D"}, {Content: "E"},
+	}
+	original := append([]model.Task(nil), base...)
+
+	got := orderTasks(base, false, 2, nil)
+	if len(got) != 2 || got[0].Content != "A" || got[1].Content != "B" {
+		t.Errorf("limited order = %#v", got)
+	}
+	if got := orderTasks(base, false, -1, nil); len(got) != len(base) {
+		t.Errorf("unlimited order returned %d tasks", len(got))
+	}
+	if got := orderTasks(base, false, 0, nil); len(got) != 0 {
+		t.Errorf("limit 0 returned %d tasks", len(got))
+	}
+
+	first := orderTasks(base, true, 3, rand.New(rand.NewSource(1)))
+	second := orderTasks(base, true, 3, rand.New(rand.NewSource(2)))
+	if len(first) != 3 || len(second) != 3 {
+		t.Fatalf("random limit lengths = %d, %d", len(first), len(second))
+	}
+	if reflect.DeepEqual(first, second) {
+		t.Errorf("different seeds produced the same sample: %#v", first)
+	}
+	allowed := make(map[string]bool)
+	for _, task := range base {
+		allowed[task.Content] = true
+	}
+	seen := make(map[string]bool)
+	for _, task := range first {
+		if !allowed[task.Content] {
+			t.Errorf("random sample contains unknown task %q", task.Content)
+		}
+		if seen[task.Content] {
+			t.Errorf("random sample contains duplicate task %q", task.Content)
+		}
+		seen[task.Content] = true
+	}
+	if !reflect.DeepEqual(base, original) {
+		t.Errorf("orderTasks mutated its input: %#v", base)
+	}
+}
+
+func TestRunLimit(t *testing.T) {
+	dir := t.TempDir()
+	writeMarkdown(t, dir, "tasks.md", ""+
+		"- [ ] A\n- [ ] B\n- [ ] C\n- [ ] D\n- [ ] E\n")
+
+	code, stdout, stderr := run(t, dir, "--format", "csv", "--limit", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	if got := taskContents(t, stdout); !reflect.DeepEqual(got, []string{"A", "B"}) {
+		t.Errorf("limited tasks = %#v", got)
+	}
+
+	code, stdout, stderr = run(t, dir, "--format", "csv", "--limit", "0")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	if got := taskContents(t, stdout); len(got) != 0 {
+		t.Errorf("limit 0 returned %#v", got)
+	}
+
+	code, stdout, stderr = run(t, dir, "--format", "csv", "--limit", "99")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	if got := taskContents(t, stdout); len(got) != 5 {
+		t.Errorf("large limit returned %d tasks, want 5", len(got))
+	}
+}
+
+func TestRunRandomLimitAndSummaryIsUnaffected(t *testing.T) {
+	dir := t.TempDir()
+	var contents strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&contents, "- [ ] Task %02d\n", i)
+	}
+	writeMarkdown(t, dir, "tasks.md", contents.String())
+
+	code, stdout, stderr := run(t, dir, "--format", "csv", "-r", "--limit", "3")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	got := taskContents(t, stdout)
+	if len(got) != 3 {
+		t.Fatalf("random limit returned %d tasks, want 3", len(got))
+	}
+	seen := make(map[string]bool)
+	for _, content := range got {
+		if seen[content] {
+			t.Errorf("random limit returned duplicate task %q", content)
+		}
+		seen[content] = true
+	}
+
+	code, stdout, stderr = run(t, dir, "--summary", "--random", "--limit", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr)
+	}
+	if !regexp.MustCompile(`Tasks:\s+20`).MatchString(stdout) {
+		t.Errorf("summary was affected by --limit/--random: %s", stdout)
 	}
 }

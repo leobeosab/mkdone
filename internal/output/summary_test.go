@@ -27,12 +27,12 @@ func TestResolveSummaryFormat(t *testing.T) {
 		want   string
 		ok     bool
 	}{
-		{"", "", FormatText, true},
+		{"", "", FormatPretty, true},
 		{"", "summary.json", FormatJSON, true},
 		{"", "summary.csv", FormatCSV, true},
-		{"", "summary.txt", FormatText, true},
+		{"", "summary.txt", FormatPretty, true},
 		{"json", "", FormatJSON, true},
-		{"TXT", "", FormatText, true},
+		{"TXT", "", FormatPretty, true},
 		{"xml", "", "", false},
 	}
 	for _, test := range tests {
@@ -109,7 +109,7 @@ func TestWriteSummaryJSON(t *testing.T) {
 func TestWriteSummaryText(t *testing.T) {
 	var buffer bytes.Buffer
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	if err := WriteSummary(summaryTasks(), FormatText, &buffer, now); err != nil {
+	if err := WriteSummary(summaryTasks(), FormatPretty, &buffer, now); err != nil {
 		t.Fatal(err)
 	}
 	output := buffer.String()

@@ -15,11 +15,8 @@ import (
 	tasksummary "github.com/ryan/mkdone/internal/summary"
 )
 
-// FormatText is the human-readable summary format.
-const FormatText = "text"
-
 // ResolveSummaryFormat validates a summary format. When format is empty it is
-// inferred from the output extension; summaries default to text.
+// inferred from the output extension; summaries default to pretty.
 func ResolveSummaryFormat(format, out string) (string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format == "" {
@@ -29,16 +26,16 @@ func ResolveSummaryFormat(format, out string) (string, error) {
 		case ".csv":
 			format = FormatCSV
 		default:
-			format = FormatText
+			format = FormatPretty
 		}
 	}
 	switch format {
-	case FormatText, "txt":
-		return FormatText, nil
+	case FormatPretty, "text", "txt":
+		return FormatPretty, nil
 	case FormatCSV, FormatJSON:
 		return format, nil
 	default:
-		return "", fmt.Errorf("unsupported summary format %q (use text, csv, or json)", format)
+		return "", fmt.Errorf("unsupported summary format %q (use pretty, csv, or json)", format)
 	}
 }
 
@@ -46,18 +43,18 @@ func ResolveSummaryFormat(format, out string) (string, error) {
 func WriteSummary(tasks []model.Task, format string, writer io.Writer, now time.Time) error {
 	data := tasksummary.Build(tasks, now)
 	switch strings.ToLower(format) {
-	case FormatText, "txt":
-		return writeSummaryText(data, writer)
+	case FormatPretty, "text", "txt":
+		return writeSummaryPretty(data, writer)
 	case FormatCSV:
 		return writeSummaryCSV(data, writer)
 	case FormatJSON:
 		return writeSummaryJSON(data, writer)
 	default:
-		return fmt.Errorf("unsupported summary format %q (use text, csv, or json)", format)
+		return fmt.Errorf("unsupported summary format %q (use pretty, csv, or json)", format)
 	}
 }
 
-func writeSummaryText(data tasksummary.Summary, writer io.Writer) error {
+func writeSummaryPretty(data tasksummary.Summary, writer io.Writer) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(table, "Tasks:\t%d\n\n", data.Total)
 
